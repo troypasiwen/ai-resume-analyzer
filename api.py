@@ -34,13 +34,9 @@ Extracted PDF text sometimes carries a per-character spacing artifact -
 "EDUCATION" comes back as "E D U C A T I O N", "JavaScript" as
 "J a v a S c r i p t". resume_parser.normalize_pdf_text() deterministically
 undoes this (see resume_parser.py for the full algorithm; no LLM is
-involved). This file:
+involved).
 
-    * keeps the RAW extractor text (never discarded, never written to
-      disk - see UploadResumeResponse.raw_text below), and
-    * normalizes that raw text with normalize_pdf_text() BEFORE it becomes
-      the active resume, so every question against /chat is grounded in
-      clean, matchable text regardless of what the extractor handed back.
+The extracted text is normalized before its normalized version becomes the active resume.
 
 The same four routes exist, the same in-memory "active resume" model is
 used, and agent_loop.run_agent() is still the only thing that ever talks to
@@ -229,7 +225,8 @@ from agent_loop import MAX_QUESTION_LENGTH, MODEL_NAME, run_agent
 # normalize_pdf_text is the same deterministic, no-LLM helper agent_loop.py
 # uses internally (see agent_loop._resolve_resume_text). Importing it
 # directly here lets /upload-resume normalize the PDF text once, up front,
-# and return both the raw and normalized versions to the client.
+# and keep the normalized version as the active resume without returning
+# resume contents to the client.
 from resume_parser import normalize_pdf_text
 
 
@@ -335,6 +332,7 @@ logger = logging.getLogger("resume_api")
 
 # Minimum number of DIFFERENT categories that must match.
 MIN_RESUME_CATEGORIES = 2
+MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024
 
 # Category 1 - contact indicators (how to reach the candidate).
 _CONTACT_PATTERNS = [
@@ -485,21 +483,6 @@ class UploadResumeResponse(BaseModel):
     # How many pages the extractor found in the PDF.
     pages: int
 
-    # The RAW text resume_extractor.extract_resume_text() produced (in
-    # visual reading order), before any normalization. This is preserved
-    # (never destroyed/discarded) so the original source text is still
-    # available if it is ever needed - see resume_parser.py's
-    # normalize_pdf_text() for what may differ from `text` below.
-    raw_text: str
-
-    # The NORMALIZED text: raw_text run through
-    # resume_parser.normalize_pdf_text(), which deterministically undoes
-    # the per-character-spacing artifact ("J a v a S c r i p t" ->
-    # "JavaScript") wherever it is present, and leaves already-clean text
-    # unchanged. This is the text that becomes the ACTIVE resume /chat is
-    # grounded in.
-    text: str
-
 
 # ============================================================
 # 5. THE FASTAPI APPLICATION
@@ -632,14 +615,12 @@ def upload_resume(file: UploadFile = File(...)):
       4. Validate that the normalized text contains enough resume evidence
          (deterministic check, no LLM - see looks_like_a_resume()).
       5. Make the NORMALIZED text the ACTIVE resume (in memory only).
-      6. Return the filename, page count, raw text AND normalized text as
-         JSON.
 
     It does NOT call Ollama, does NOT call any external API, and does NOT
     save the file to disk - the upload only exists in memory, first for the
-    duration of this request, and then (just the extracted text, raw and
-    normalized) as the active resume until the next successful upload or a
-    server restart. Embeddings/ChromaDB come in a later step.
+    duration of this request; only the normalized text remains active until
+    the next successful upload or a server restart. Embeddings/ChromaDB come
+    in a later step.
     """
 
     # ---- 1. Validate that this is actually a PDF ----
@@ -661,11 +642,11 @@ def upload_resume(file: UploadFile = File(...)):
             ),
         )
 
-    # ---- 2. Read the raw bytes of the upload ----
-    # UploadFile wraps a temporary file-like object. .file is the underlying
-    # standard Python file object, so .file.read() gives us the raw bytes.
+    # ---- 2. Read the upload with a strict size cap ----
+    # Read at most one byte beyond the limit so oversized uploads are rejected
+    # without loading their full contents into memory.
     try:
-        pdf_bytes = file.file.read()
+        pdf_bytes = file.file.read(MAX_UPLOAD_SIZE_BYTES + 1)
     except Exception:
         logger.exception("Failed to read the uploaded file")
         raise HTTPException(
@@ -675,6 +656,12 @@ def upload_resume(file: UploadFile = File(...)):
     finally:
         # Always close the upload, whether reading succeeded or not.
         file.file.close()
+
+    if len(pdf_bytes) > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Uploaded PDF exceeds the maximum allowed size of 10 MiB.",
+        )
 
     if not pdf_bytes:
         raise HTTPException(
@@ -763,8 +750,8 @@ def upload_resume(file: UploadFile = File(...)):
     # WHY THE ACTIVE RESUME IS NOT CHANGED ON FAILURE: this check runs BEFORE
     # set_active_resume_text() below, and raising HTTPException leaves this
     # function immediately, so a rejected non-resume PDF can never replace
-    # the resume that /chat is currently using. The previously active resume
-    # (an earlier upload, or the built-in sample) stays exactly as it was.
+    # the resume that /chat is currently using. A previous active resume
+    # stays unchanged; if none was uploaded, no resume remains active.
     if not looks_like_a_resume(normalized_text):
         logger.warning(
             "Rejected upload %r: text present but only matched resume "
@@ -787,15 +774,13 @@ def upload_resume(file: UploadFile = File(...)):
     # normalized text, until either another PDF is uploaded or the server
     # restarts. This is the ONLY place in the whole application that
     # changes the active resume. resume.txt is never opened, read, or
-    # written here, and raw_text is never discarded - it is returned below.
+    # written here; only normalized_text is retained as active state.
     set_active_resume_text(normalized_text)
 
     # ---- 8. Return the result ----
     return UploadResumeResponse(
         filename=file.filename,
         pages=page_count,
-        raw_text=raw_text,
-        text=normalized_text,
     )
 
 

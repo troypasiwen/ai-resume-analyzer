@@ -171,9 +171,6 @@ def upload_resume_to_backend(uploaded_file):
         or not isinstance(data.get("filename"), str)
         or not data["filename"].strip()
         or not isinstance(data.get("pages"), int)
-        or not isinstance(data.get("raw_text"), str)
-        or not isinstance(data.get("text"), str)
-        or not data["text"].strip()
     ):
         return None, "The upload response was missing valid resume details.", "unknown"
 

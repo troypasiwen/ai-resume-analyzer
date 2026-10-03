@@ -157,8 +157,8 @@ def run_checks_on_normalize_pdf_text_examples():
     )
     safe_check(
         "a character-spaced email address is reconstructed with no stray spaces",
-        normalize_pdf_text("s a m p l e . u s e r 1 2 3 @ g m a i l . c o m")
-        == "sample.user123@gmail.com",
+        normalize_pdf_text("s a m p l e . u s e r 1 2 3 @ e x a m p l e . c o m")
+        == "sample.user123@example.com",
     )
     safe_check(
         "a character-spaced URL is reconstructed with no stray spaces",

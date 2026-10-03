@@ -661,8 +661,8 @@ def _compute_group_anchor(line_position_sets):
     This is used ONLY as a FALLBACK anchor inside
     _find_entity_anchored_blocks(), for the case where the primary
     token-subset check finds no structured block containing every word of
-    the group (e.g. a company header line such as "Inter-World Shipping
-    Corporation - Ermita, Manila 2025-2026" that sits OUTSIDE the
+    the group (e.g. a company header line such as "Example Company - Example
+    City 2025-2026" that sits OUTSIDE the
     structured experience entry's own raw_text, which starts at the job
     title/bullets). It never inspects which words or entity are involved -
     only the structural fact of where, in the resume's own reading order,
@@ -684,7 +684,7 @@ def _find_entity_anchored_blocks(entity_word_groups, structured, entity_group_an
     school, project title, etc.) that is NOT one of the general CONCEPTS
     shows up. Grouping by contiguous run (rather than treating every
     literally-matched word in the whole query as one flat bag) keeps an
-    entity phrase like "Inter-World Shipping Corporation" together as one
+    entity phrase like "Example Company" together as one
     unit, distinct from any other, unrelated literal word matched
     elsewhere in the same query.
 
@@ -781,7 +781,7 @@ def _find_entity_anchored_blocks(entity_word_groups, structured, entity_group_an
 
 # ---- Employer / EXPERIENCE-entry handling (NEW) --------------------------
 # The employer NAME of an experience entry usually sits in a header line
-# (e.g. "Inter-World Shipping Corporation - Ermita, Manila 2025-2026")
+# (e.g. "Example Company - Example City 2025-2026")
 # directly ABOVE the entry's own raw_text (which starts at the job title and
 # its bullets), or occasionally as the first line of raw_text itself. To
 # decide whether the candidate really worked somewhere, ONLY those header
@@ -1225,7 +1225,7 @@ def search_resume(query, resume_text=None):
     )
 
     # A concept trigger word that is really PART of an organization name
-    # (e.g. "System" and "Technologies" in "Seaker System Technologies
+    # (e.g. "System" and "Technologies" in "Example System Technologies
     # Incorporated") is not a request for that concept, so only concept
     # words OUTSIDE the named organization count here.
     effective_specific = [
@@ -1255,7 +1255,7 @@ def search_resume(query, resume_text=None):
         if handled[position]:
             # Stopwords / concept-consumed tokens are connective tissue:
             # they neither break nor extend an in-progress entity phrase
-            # (e.g. "at" in "... Intern at Inter-World Shipping Corporation").
+            # (e.g. "at" in "... Intern at Example Company").
             continue
 
         word = words[position]
@@ -2399,7 +2399,7 @@ def ask_llm_for_decision(state, correction=""):
 
         except DecisionError as error:
             last_error = error
-            print(f"(decision attempt {attempt} was rejected: {error})")
+            print("LLM decision was rejected; retrying.")
             prompt = (
                 base_prompt
                 + f"\n\nYour previous reply was rejected: {error}\n"
@@ -3037,8 +3037,7 @@ def run_agent(user_question, resume_text=None):
             state.tool_calls_used += 1
             state.tools_executed += 1
 
-            print_section("EMPLOYER CHECK (deterministic)")
-            print(format_json(employer_verdict))
+            print("EMPLOYER CHECK: deterministic check completed.")
 
             executed_verdict = {
                 "role": "tool",
@@ -3055,7 +3054,6 @@ def run_agent(user_question, resume_text=None):
             lock_reason, _lock_text = get_tool_lock(state)
 
             print_section(f"AGENT ITERATION {iteration}")
-            print(f"USER QUESTION: {user_question}")
             print(f"HISTORY SENT TO LLM: {len(state.messages)} message(s)")
             print(
                 f"BUDGETS: iteration {iteration}/{MAX_ITERATIONS} | "
@@ -3068,9 +3066,7 @@ def run_agent(user_question, resume_text=None):
 
             decision = ask_llm_for_decision(state)
 
-            print("LLM DECISION:")
-            print(indent_text(format_json(decision)))
-            print()
+            print(f"LLM ACTION: {decision['action']}")
 
             if decision["action"] == "final":
                 answer = ground_final_answer(state, decision["answer"])
@@ -3080,7 +3076,6 @@ def run_agent(user_question, resume_text=None):
             arguments = decision["arguments"]
 
             print(f"TOOL: {tool_name}")
-            print(f"ARGUMENTS: {json.dumps(arguments, default=str)}")
 
             call_key = make_call_key(tool_name, arguments)
             remember_decision(state, tool_name, arguments)
@@ -3093,14 +3088,6 @@ def run_agent(user_question, resume_text=None):
 
                 print("STATUS: SKIPPED — DUPLICATE REQUEST")
                 print(f"(this exact request has now been repeated {repeats} time(s))")
-                print("RECENT TOOL DECISIONS:")
-                for entry in state.recent_decisions:
-                    print(f"    - {entry}")
-                print("PREVIOUS RESULT:")
-                if "error" in previous:
-                    print(indent_text(f"(error) {previous['error']}"))
-                else:
-                    print(indent_text(format_json(previous["result"])))
 
                 if repeats >= DUPLICATE_STOP_AT:
                     print()
@@ -3166,7 +3153,6 @@ def run_agent(user_question, resume_text=None):
 
             except ToolError as error:
                 print("STATUS: REFUSED — INVALID TOOL REQUEST")
-                print(f"TOOL RESULT: REJECTED BY PYTHON - {error}")
                 refused = {
                     "role": "tool",
                     "tool": tool_name,
@@ -3186,7 +3172,6 @@ def run_agent(user_question, resume_text=None):
             except Exception as error:
                 failure = ToolExecutionError(f"Tool '{tool_name}' failed: {error}")
                 print("STATUS: FAILED")
-                print(f"TOOL RESULT: ERROR - {failure}")
                 failed = {
                     "role": "tool",
                     "tool": tool_name,
@@ -3201,8 +3186,6 @@ def run_agent(user_question, resume_text=None):
             state.tools_executed += 1
 
             print("STATUS: EXECUTED")
-            print("TOOL RESULT:")
-            print(indent_text(format_json(tool_result)))
 
             executed = {
                 "role": "tool",

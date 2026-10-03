@@ -451,8 +451,8 @@ def run_checks_on_missing_projects_section():
 
 # ============================================================
 # 11. NEW: COMPANY-SPECIFIC ENTITY-ANCHORED RETRIEVAL
-#     (the bug reported: "What did I do during my internship at
-#     Inter-World Shipping Corporation?" only returned the company-name
+#     (the bug reported: a question about an internship at a named employer
+#     only returned the company-name
 #     line, not what the candidate actually did there)
 #
 #     Proven with two SYNTHETIC, made-up companies ("Acme Corp" and "Beta

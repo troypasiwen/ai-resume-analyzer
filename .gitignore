@@ -25,8 +25,8 @@ __pycache__/
 chroma_db/
 
 # Personal resume and candidate data
-Corporate Resume - Pasiwen.pdf
-Pasiwen, Troy - Resume.pdf
+Corporate Resume - *.pdf
+* - Resume.pdf
 resume.txt
 resume_text.txt
 job_description.txt
