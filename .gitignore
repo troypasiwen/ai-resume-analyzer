@@ -1,0 +1,71 @@
+# Python virtual environment
+.venv/
+venv/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local/editor artifacts
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local runtime / generated data
+*.log
+
+# Local Chroma/vector database
+chroma_db/
+
+# Personal resume and candidate data
+Corporate Resume - Pasiwen.pdf
+Pasiwen, Troy - Resume.pdf
+resume.txt
+resume_text.txt
+job_description.txt
+
+# Generated local test and analysis outputs
+analysis_results.json
+rag_evaluation_results.json
+results_*.json
+trace_prompts.txt
+
+# Local backups and working copies
+agent_loop.py.backup
+agent_loop.py.bak_before_relevance_fix
+agent_loop.py.working
+agent_loop_before.py
+api.py.working
+resume_extractor.py.working
+rag_llm_test_backup.py
+
+# Local development utilities and candidate-specific tests
+run_12_tests.py
+trace_question.py
+test_agent_regression.py
+test_ats_analyzer.py
+
+# Experimental prototypes
+apply_relevance_fix.py
+create_empty_pdf.py
+diagnose_relevance.py
+embeddings_test.py
+main.py
+multi_tool_calling.py
+rag_chat.py
+rag_evaluation.py
+rag_llm_test.py
+rag_llm_v2.py
+rag_retrieval_test.py
+tool_calling.py
+vector_store_test.py
+
+# Generic non-resume upload test fixture
+test_non_resume.pdf
