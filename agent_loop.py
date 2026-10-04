@@ -28,6 +28,9 @@ from resume_parser import _build_units, normalize_pdf_text, parse_resume
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "llama3.2:3b"
+OLLAMA_KEEP_ALIVE = "30m"
+OLLAMA_WARMUP_PROMPT = "Reply with one word: ready."
+OLLAMA_WARMUP_TIMEOUT = (10, 600)
 
 REQUEST_TIMEOUT = (10, 180)
 
@@ -236,6 +239,25 @@ QUERY_META_WORDS = {
     "sentence", "phrase", "wording", "relevant",
     "related", "most", "best", "strongest", "closest", "directly", "suited",
 }
+
+
+def _is_candidate_name_query(tokens):
+    if "candidate" not in tokens:
+        return False
+
+    content_tokens = {
+        _normalize(token)
+        for token in tokens
+        if token not in SEARCH_STOPWORDS
+        and token != "you"
+        and _normalize(token) not in SEARCH_STOPWORDS
+        and _normalize(token) not in QUERY_META_WORDS
+    }
+
+    if "name" in content_tokens:
+        return content_tokens <= {"name", "full"}
+
+    return "who" in tokens and not content_tokens
 
 # Words that name an ASPECT of an entry (its duty bullets) that structured
 # parsing already captures wholesale, rather than a separate fact requiring
@@ -1165,7 +1187,10 @@ def search_resume(query, resume_text=None):
             _normalize(token) for token in _tokenize(phrase)
         )
 
-        if normalized_query == normalized_phrase:
+        if normalized_query == normalized_phrase or (
+            field_path == ("candidate_name",)
+            and _is_candidate_name_query(tokens)
+        ):
             value = structured
 
             for key in field_path:
@@ -1657,11 +1682,42 @@ class AgentState:
 # 8. OLLAMA HELPER
 # ============================================================
 
+def warm_up_ollama():
+    payload = {
+        "model": MODEL_NAME,
+        "prompt": OLLAMA_WARMUP_PROMPT,
+        "stream": False,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
+        "options": {
+            "temperature": 0,
+            "num_predict": 1,
+            "num_ctx": 128,
+        },
+    }
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json=payload,
+            timeout=OLLAMA_WARMUP_TIMEOUT,
+        )
+        response.raise_for_status()
+        body = response.json()
+    except requests.exceptions.RequestException as error:
+        raise OllamaError("Ollama startup warm-up failed.") from error
+    except ValueError as error:
+        raise OllamaError("Ollama startup warm-up returned an invalid response.") from error
+
+    if not isinstance(body, dict) or not isinstance(body.get("response"), str) or not body["response"].strip():
+        raise OllamaError("Ollama startup warm-up returned an empty response.")
+
+
 def call_ollama(prompt, max_tokens, json_mode=False):
     payload = {
         "model": MODEL_NAME,
         "prompt": prompt,
         "stream": False,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
         "options": {
             "temperature": 0,
             "num_predict": max_tokens,
@@ -3025,6 +3081,33 @@ def run_agent(user_question, resume_text=None):
         )
 
     try:
+        if _is_candidate_name_query(_tokenize(user_question)):
+            arguments = {"query": user_question}
+            result = search_resume(resume_text=state.resume_text, **arguments)
+            state.iteration = 1
+            state.tool_calls_used += 1
+            state.tools_executed += 1
+            executed = {
+                "role": "tool",
+                "tool": "search_resume",
+                "arguments": arguments,
+                "result": result,
+            }
+            state.messages.append(executed)
+            state.previous_calls[make_call_key("search_resume", arguments)] = executed
+
+            candidate_name_facts = [
+                fact for fact in result.get("results", [])
+                if isinstance(fact, str) and fact.startswith("Candidate name: ")
+            ]
+            if candidate_name_facts:
+                answer = ground_final_answer(state, candidate_name_facts[0])
+            else:
+                analysis = analyze_history(state.messages, state.resume_text)
+                answer = build_fallback_answer(analysis, user_question)
+
+            return make_outcome(state, "final", answer)
+
         # An employment question naming an organization that is NOT an
         # EXPERIENCE employer is answered from that check alone: the result
         # is recorded as an executed search_resume call and further tools

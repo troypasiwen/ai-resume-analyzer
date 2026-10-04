@@ -196,9 +196,11 @@ to POST /upload-resume is a later step.
 # 1. IMPORTS
 # ============================================================
 
+import asyncio
 import logging
 import re
 import threading
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
@@ -220,7 +222,7 @@ from resume_extractor import ResumeExtractionError, extract_resume_text
 #
 # Importing agent_loop is safe: its main() only runs when you execute
 # "python agent_loop.py" directly (it is guarded by if __name__ == "__main__").
-from agent_loop import MAX_QUESTION_LENGTH, MODEL_NAME, run_agent
+from agent_loop import MAX_QUESTION_LENGTH, MODEL_NAME, run_agent, warm_up_ollama
 
 # normalize_pdf_text is the same deterministic, no-LLM helper agent_loop.py
 # uses internally (see agent_loop._resolve_resume_text). Importing it
@@ -490,10 +492,33 @@ class UploadResumeResponse(BaseModel):
 # "app" is the object Uvicorn runs (the "api:app" in the uvicorn command means
 # "the variable called app inside api.py"). Every route below is registered on it.
 
+_ollama_model_ready = False
+
+
+@asynccontextmanager
+async def lifespan(_application):
+    global _ollama_model_ready
+    _ollama_model_ready = False
+    try:
+        await asyncio.to_thread(warm_up_ollama)
+    except Exception:
+        logger.warning(
+            "Ollama model warm-up unavailable; the API is starting without a ready model."
+        )
+    else:
+        _ollama_model_ready = True
+
+    try:
+        yield
+    finally:
+        _ollama_model_ready = False
+
+
 app = FastAPI(
     title="AI Resume Analyzer API",
     description="HTTP backend for the local Ollama resume agent (agent_loop.py).",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 
@@ -511,10 +536,10 @@ def root():
 def health():
     """GET /health  ->  a tiny endpoint that monitoring tools can poll.
 
-    It only says the API process is alive. It does NOT call Ollama, so it
-    stays instant even when the model is busy.
+    It reports whether the API process is alive and whether its startup
+    Ollama warm-up succeeded. It does NOT call Ollama, so it stays instant.
     """
-    return {"status": "ok"}
+    return {"status": "ok", "model_ready": _ollama_model_ready}
 
 
 # This function is a normal "def" (not "async def") on purpose.
@@ -532,6 +557,7 @@ def chat(request: ChatRequest):
       * confirmed it has a non-empty "question" string of allowed length.
     (Otherwise the client already received an automatic HTTP 422 error.)
     """
+    global _ollama_model_ready
     question = request.question
 
     # ---- Read whichever resume is currently active ----
@@ -572,6 +598,7 @@ def chat(request: ChatRequest):
     # return it as a normal 200 response. We log the details for you and send
     # the client a short, safe message.
     if outcome["status"] == "error":
+        _ollama_model_ready = False
         logger.error("Agent stopped with an error: %s", outcome["answer"])
         raise HTTPException(
             status_code=503,
@@ -580,6 +607,8 @@ def chat(request: ChatRequest):
                 f"Make sure Ollama is running and the model '{MODEL_NAME}' is available."
             ),
         )
+
+    _ollama_model_ready = True
 
     # ---- Build the response ----
     # The dict returned by run_agent() is copied into the ChatResponse model.
